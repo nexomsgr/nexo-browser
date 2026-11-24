@@ -1,0 +1,26 @@
+name: windows-build
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: nexo-browser
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: nexo-browser
+      - name: Build (debug)
+        run: cargo build --all-targets
+      - name: Tests
+        run: cargo test
+      - name: Build (release)
+        run: cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexo-windows-x64
+          path: nexo-browser/target/release/nexo.exe
