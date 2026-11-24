@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'">
+<title>Новая вкладка</title>
+<style>
+/*THEME*/
+html, body { height: 100%; margin: 0; }
+body {
+  display: flex; align-items: center; justify-content: center;
+  font: 15px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+}
+.wrap { width: min(640px, 86vw); text-align: center; }
+h1 {
+  margin: 0 0 28px; font-size: 68px; font-weight: 700; letter-spacing: -2px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-cyan));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+form {
+  display: flex; align-items: center; height: 52px; padding: 0 22px;
+  background: var(--panel); border: 1px solid var(--panel-border); border-radius: 26px;
+  transition: border-color .15s, box-shadow .15s;
+}
+form:focus-within { border-color: var(--accent-cyan); box-shadow: 0 0 0 4px rgba(53, 184, 245, .15); }
+input {
+  flex: 1; height: 100%; border: 0; outline: 0; background: transparent;
+  color: var(--text); font: inherit; font-size: 16px;
+}
+input::placeholder { color: var(--text-dim); }
+.hint { margin: 18px 0 0; color: var(--text-dim); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Nexo</h1>
+  <form id="f" autocomplete="off">
+    <input id="q" type="text" autofocus spellcheck="false" placeholder="Поиск или адрес сайта" aria-label="Поиск или адрес сайта">
+  </form>
+  <p class="hint">Nexo Browser — быстро и бережно к оперативной памяти</p>
+</div>
+<script src="newtab.js"></script>
+</body>
+</html>
