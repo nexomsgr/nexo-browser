@@ -1,0 +1,90 @@
+name: windows-build
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      benchmark:
+        description: 'Запустить замеры памяти (Nexo в 3 режимах, Chrome, Edge)'
+        type: boolean
+        default: false
+      runs:
+        description: 'Прогонов на сценарий'
+        default: '3'
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: nexo-browser
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: nexo-browser
+      - name: Build (debug)
+        run: cargo build --all-targets
+      - name: Tests
+        run: cargo test
+      - name: Build (release)
+        run: cargo build --release
+      - name: Smoke test (запуск nexo.exe)
+        shell: pwsh
+        run: ./scripts/smoke.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexo-windows-x64
+          path: nexo-browser/target/release/nexo.exe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-screenshot
+          path: nexo-browser/smoke-out
+  bench:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.benchmark }}
+    needs: build
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { browser: nexo, mode: balanced }
+          - { browser: nexo, mode: memory }
+          - { browser: nexo, mode: max }
+          - { browser: chrome, mode: '' }
+          - { browser: edge, mode: '' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: nexo-windows-x64
+          path: bin
+      - name: Benchmark
+        shell: pwsh
+        run: |
+          $p = @{ Browser = '${{ matrix.browser }}'; Runs = [int]'${{ inputs.runs }}' }
+          if ('${{ matrix.mode }}') { $p.Mode = '${{ matrix.mode }}' }
+          if ('${{ matrix.browser }}' -eq 'nexo') { $p.Exe = "${{ github.workspace }}/bin/nexo.exe" }
+          ./nexo-browser/scripts/benchmark.ps1 @p
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-${{ matrix.browser }}-${{ matrix.mode }}
+          path: bench-out
+  report:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.benchmark }}
+    needs: bench
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bench-*
+          path: all
+          merge-multiple: true
+      - shell: pwsh
+        run: ./nexo-browser/scripts/compare.ps1 -Dir all -Base nexo-balanced | Tee-Object report.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-report
+          path: report.txt

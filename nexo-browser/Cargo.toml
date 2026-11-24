@@ -1,0 +1,53 @@
+[package]
+name = "nexo-browser"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "Nexo Browser — lightweight, RAM-efficient browser for Windows 10/11 (Rust + WebView2)"
+license = "MIT"
+build = "build.rs"
+
+[lib]
+name = "nexo_browser"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nexo"
+path = "src/main.rs"
+
+[dependencies]
+# Хранилище: закладки, история, сессия, настройки, разрешения
+rusqlite = { version = "0.43", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+dirs = "7"
+anyhow = "1"
+
+# Окна и WebView (wry 0.57 + tao 0.37 согласованы по версиям dpi и raw-window-handle).
+tao = "0.37"
+wry = "0.57"
+
+# Только Windows: Win32 и события WebView2 (webview2-com 0.39 + windows 0.62 — те же версии, что у wry).
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_SystemInformation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+] }
+
+[profile.release]
+opt-level = "z"        # приоритет — размер и RAM, а не пиковая скорость
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 1
