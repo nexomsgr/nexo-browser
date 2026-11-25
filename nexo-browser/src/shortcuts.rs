@@ -108,6 +108,7 @@ pub fn lookup(c: Chord) -> Option<Command> {
         (true, false, false, Char('h')) => ShowHistory,
         (true, false, false, Char('j')) => ShowDownloads,
         (true, true, false, Char('o')) => ShowBookmarks,
+        (true, false, false, Char('p')) => Print,
         _ => return None,
     })
 }

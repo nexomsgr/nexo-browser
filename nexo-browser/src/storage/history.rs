@@ -54,6 +54,24 @@ impl Db {
         Ok(())
     }
 
+    /// Самые посещаемые страницы — плитки на новой вкладке.
+    pub fn top_history(&self, limit: usize) -> Result<Vec<HistoryEntry>> {
+        let mut st = self.conn().prepare(
+            "SELECT id, url, title, visit_count, last_visit_ms FROM history
+             ORDER BY visit_count DESC, last_visit_ms DESC, id DESC LIMIT ?1",
+        )?;
+        let rows = st.query_map(params![limit as i64], |r| {
+            Ok(HistoryEntry {
+                id: r.get(0)?,
+                url: r.get(1)?,
+                title: r.get(2)?,
+                visit_count: r.get(3)?,
+                last_visit_ms: r.get::<_, i64>(4)? as u64,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
     pub fn recent_history(&self, limit: usize) -> Result<Vec<HistoryEntry>> {
         let mut st = self.conn().prepare(
             "SELECT id, url, title, visit_count, last_visit_ms FROM history

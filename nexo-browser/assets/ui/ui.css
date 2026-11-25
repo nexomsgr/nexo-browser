@@ -4,43 +4,46 @@ html, body {
   font: 13px/1.2 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 }
 
-#app { position: relative; height: 92px; padding: 0 8px; }
+#app { position: relative; height: 84px; padding: 0; background: var(--panel-hover); }
 
 /* ---------- Вкладки ---------- */
-.tabstrip { display: flex; align-items: flex-end; gap: 4px; height: 46px; padding-top: 8px; }
+.tabstrip { display: flex; align-items: flex-end; gap: 4px; height: 44px; padding: 6px 8px 0; background: var(--bg-start); }
 /* Лента вкладок прокручивается горизонтально (колесом мыши), кнопка «+» остаётся на месте. */
 .tabs {
-  display: flex; align-items: flex-end; gap: 6px; flex: 0 1 auto; min-width: 0; height: 100%;
+  display: flex; align-items: flex-end; gap: 0; flex: 0 1 auto; min-width: 0; height: 100%;
   overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
 }
 .tabs::-webkit-scrollbar { display: none; }
-.new-tab { flex: none; margin-bottom: 1px; }
+.new-tab { flex: none; width: 28px; height: 28px; margin: 0 0 4px 4px; }
 
 .tab {
   position: relative; display: flex; align-items: center; gap: 8px;
-  flex: 0 1 240px; min-width: 64px; height: 36px; padding: 0 8px 0 12px;
-  border: 1px solid transparent; border-radius: 12px 12px 0 0;
+  flex: 0 1 240px; width: 240px; min-width: 48px; height: 38px; padding: 0 8px 0 12px;
+  border: 0; border-radius: 10px 10px 0 0;
   color: var(--text-dim); background: transparent;
   transition: background-color .15s, color .15s, opacity .15s;
 }
-.tab:hover { background: var(--panel-hover); }
+.tab:hover:not(.active) { background: var(--selected); }
+/* тонкий разделитель между неактивными вкладками, как в Chrome */
+.tab:not(.active):not(:hover)::after { content: ""; position: absolute; right: 0; top: 10px; bottom: 10px; width: 1px; background: var(--panel-border); }
+.tab.active::after, .tab:hover::after { display: none; }
 .tab.active {
-  background: var(--selected); border-color: var(--panel-border); border-bottom-color: transparent;
-  color: var(--text);
+  background: var(--panel-hover); color: var(--text);
 }
 .tab .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Значок вкладки: градиентная точка; во время загрузки — крутящееся кольцо; у спящей вкладки — пустое кольцо. */
 .tab .dot {
-  flex: none; width: 14px; height: 14px; border-radius: 50%;
+  flex: none; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%;
   background: linear-gradient(135deg, var(--accent), var(--accent-cyan));
+  color: #fff; font-size: 9px; font-weight: 700; line-height: 1;
 }
 .tab.loading .dot {
   background: transparent; border: 2px solid var(--panel-border); border-top-color: var(--accent-cyan);
-  animation: spin .8s linear infinite;
+  font-size: 0; animation: spin .8s linear infinite;
 }
 .tab.sleeping:not(.active) { opacity: .55; }
-.tab.sleeping:not(.active) .dot { background: transparent; border: 2px solid var(--text-dim); }
+.tab.sleeping:not(.active) .dot { background: transparent; border: 2px solid var(--text-dim); font-size: 0; }
 
 .tab .close {
   flex: none; display: none; place-items: center; width: 20px; height: 20px; padding: 0;
@@ -53,10 +56,10 @@ html, body {
 .tab.dragging { z-index: 5; opacity: .92; box-shadow: 0 6px 18px rgba(0, 0, 0, .35); transition: none; }
 
 /* ---------- Панель инструментов ---------- */
-.toolbar { display: flex; align-items: center; gap: 6px; height: 46px; padding: 2px 0 8px; }
+.toolbar { display: flex; align-items: center; gap: 4px; height: 40px; padding: 0 8px; background: var(--panel-hover); box-shadow: 0 1px 0 var(--panel-border); }
 
 .icon-btn {
-  flex: none; display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
+  flex: none; display: grid; place-items: center; width: 32px; height: 32px; padding: 0;
   border: 0; border-radius: 50%; background: transparent; color: var(--text-dim); cursor: default;
   transition: background-color .15s, color .15s;
 }
@@ -66,8 +69,8 @@ html, body {
 .icon-btn svg { display: block; }
 
 .address {
-  flex: 1; display: flex; align-items: center; gap: 8px; height: 36px; margin: 0; padding: 0 14px;
-  background: var(--panel); border: 1px solid var(--panel-border); border-radius: 18px;
+  flex: 1; display: flex; align-items: center; gap: 8px; height: 30px; margin: 0 4px; padding: 0 12px;
+  background: var(--bg-start); border: 1px solid var(--panel-border); border-radius: 15px;
   transition: border-color .15s, box-shadow .15s;
 }
 .address:focus-within { border-color: var(--accent-cyan); box-shadow: 0 0 0 3px rgba(53, 184, 245, .18); }
@@ -85,7 +88,7 @@ html, body {
 .star[hidden] { display: none; }
 
 /* ---------- Индикатор загрузки (только transform/opacity — почти бесплатно для CPU) ---------- */
-.progress { position: absolute; left: 8px; right: 8px; bottom: 0; height: 2px; overflow: hidden; opacity: 0; transition: opacity .2s; }
+.progress { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; overflow: hidden; opacity: 0; transition: opacity .2s; }
 .progress::after {
   content: ""; position: absolute; inset: 0 auto 0 0; width: 40%;
   background: linear-gradient(90deg, var(--accent), var(--accent-cyan)); border-radius: 2px;

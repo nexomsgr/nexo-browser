@@ -54,6 +54,33 @@ pub fn history_json(db: &Db, query: &str) -> Value {
     json!({"query": q, "entries": entries})
 }
 
+/// Плитки популярных сайтов для новой вкладки.
+pub fn topsites_json(db: &Db) -> Value {
+    let sites: Vec<Value> = db
+        .top_history(8)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|e| json!({"url": e.url, "title": e.title}))
+        .collect();
+    json!({"sites": sites})
+}
+
+/// Состояние менеджера паролей для страницы. Пароли сюда НЕ попадают — только по запросу `vault_reveal`.
+pub fn vault_json(available: bool, initialized: bool, vault: &crate::vault::Vault) -> Value {
+    let items: Vec<Value> = vault
+        .items()
+        .map(|list| {
+            list.iter()
+                .map(|c| {
+                    json!({"id": c.id, "name": c.name, "url": c.url, "username": c.username,
+                           "note": c.note, "updated_ms": c.updated_ms})
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    json!({"available": available, "initialized": initialized, "unlocked": vault.is_unlocked(), "items": items})
+}
+
 pub fn downloads_json(d: &Downloads) -> Value {
     let items: Vec<Value> = d
         .items()
@@ -128,6 +155,19 @@ mod tests {
         let found = history_json(&db, "  rust ");
         assert_eq!(found["query"], "rust");
         assert_eq!(found["entries"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn top_sites_are_ordered_by_visits() {
+        let db = Db::open_in_memory().unwrap();
+        db.record_visit("https://a.example/", "A", 1).unwrap();
+        for t in 2..5 {
+            db.record_visit("https://b.example/", "B", t).unwrap();
+        }
+        let v = topsites_json(&db);
+        assert_eq!(v["sites"][0]["url"], "https://b.example/");
+        assert_eq!(v["sites"].as_array().unwrap().len(), 2);
+        assert_eq!(topsites_json(&Db::open_in_memory().unwrap())["sites"].as_array().unwrap().len(), 0);
     }
 
     #[test]

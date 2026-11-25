@@ -20,7 +20,7 @@
   const handlers = {};
   window.nexoPage = { update(kind, data) { if (handlers[kind]) handlers[kind](data); } };
   // Навигация между внутренними страницами (ссылки — через команду navigate, не через href).
-  const NAV = [['Закладки', 'bookmarks'], ['История', 'history'], ['Загрузки', 'downloads'], ['Настройки', 'settings'], ['Производительность', 'performance']];
+  const NAV = [['Закладки', 'bookmarks'], ['История', 'history'], ['Загрузки', 'downloads'], ['Пароли', 'passwords'], ['Настройки', 'settings'], ['Производительность', 'performance']];
   const here = location.pathname.replace(/^\//, '');
   const page = document.querySelector('.page');
   if (page) {
@@ -32,8 +32,27 @@
     }
     page.prepend(nav);
   }
+  // Передача файла в Rust кусками (лимит одного сообщения — 128 КБ). Режем по символам Unicode, а не пополам
+  // суррогатной пары: иначе каждый кусок станет невалидным JSON.
+  const CHUNK = 24000;
+  const MAX_FILE = 32 * 1024 * 1024;
+  async function sendFile(kind, file, extra) {
+    if (!file) return false;
+    if (file.size > MAX_FILE) throw new Error('Файл больше 32 МБ');
+    const text = await file.text();
+    send({ cmd: 'import_begin', kind });
+    for (let i = 0; i < text.length;) {
+      let end = Math.min(i + CHUNK, text.length);
+      const last = text.charCodeAt(end - 1);
+      if (end < text.length && last >= 0xd800 && last <= 0xdbff) end++;
+      send({ cmd: 'import_chunk', data: text.slice(i, end) });
+      i = end;
+    }
+    send(Object.assign({ cmd: 'import_commit', kind }, extra || {}));
+    return true;
+  }
   window.nexoLib = {
-    send, h, size, when, open,
+    send, h, size, when, open, sendFile,
     on(kind, fn) { handlers[kind] = fn; },
     // Первый запрос данных; страница сама просит их, когда готова их принять.
     ready() { send({ cmd: 'page_data' }); },

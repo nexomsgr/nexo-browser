@@ -39,16 +39,18 @@ pub enum InternalPage {
     Bookmarks,
     Downloads,
     Settings,
+    Passwords,
 }
 
 impl InternalPage {
-    pub const ALL: [InternalPage; 6] = [
+    pub const ALL: [InternalPage; 7] = [
         Self::NewTab,
         Self::Performance,
         Self::History,
         Self::Bookmarks,
         Self::Downloads,
         Self::Settings,
+        Self::Passwords,
     ];
 
     pub fn host(self) -> &'static str {
@@ -59,6 +61,7 @@ impl InternalPage {
             Self::Bookmarks => "bookmarks",
             Self::Downloads => "downloads",
             Self::Settings => "settings",
+            Self::Passwords => "passwords",
         }
     }
 
@@ -70,6 +73,7 @@ impl InternalPage {
             "bookmarks" => Self::Bookmarks,
             "downloads" => Self::Downloads,
             "settings" => Self::Settings,
+            "passwords" => Self::Passwords,
             _ => return None,
         })
     }

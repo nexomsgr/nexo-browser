@@ -16,7 +16,7 @@
     search: SVG('<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>'),
     plus: SVG('<path d="M12 5v14M5 12h14"/>'),
     star: SVG('<path d="M12 3.5l2.7 5.6 6.1.8-4.5 4.2 1.1 6-5.4-3-5.4 3 1.1-6L3.2 9.9l6.1-.8z"/>'),
-    gear: SVG('<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>'),
+    dots: SVG('<circle cx="12" cy="5" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="19" r="1.6" fill="currentColor"/>', 20),
     starOn: SVG('<path fill="currentColor" d="M12 3.5l2.7 5.6 6.1.8-4.5 4.2 1.1 6-5.4-3-5.4 3 1.1-6L3.2 9.9l6.1-.8z"/>'),
     close: SVG('<path d="M6 6l12 12M18 6L6 18"/>', 12),
   };
@@ -54,7 +54,7 @@
     el.dataset.id = String(id);
     el.setAttribute('role', 'tab');
     const dot = document.createElement('span');
-    dot.className = 'dot';
+    dot.className = 'dot';   // буква-значок (favicon не загружаем — это экономит память и трафик)
     const title = document.createElement('span');
     title.className = 'title';
     const close = document.createElement('button');
@@ -73,7 +73,11 @@
     el.classList.toggle('sleeping', t.sleeping);
     el.setAttribute('aria-selected', String(t.active));
     const title = el.children[1];
-    if (title.textContent !== t.title) title.textContent = t.title;   // только textContent: заголовок задаёт сайт
+    if (title.textContent !== t.title) {
+      title.textContent = t.title;
+      const ch = Array.from(t.title.trim())[0];
+      el.children[0].textContent = ch ? ch.toUpperCase() : '';
+    }   // только textContent: заголовок задаёт сайт
     el.title = t.sleeping ? t.title + ' — вкладка спит' : t.title;
   }
 
@@ -119,7 +123,7 @@
     setIcon(backBtn, ICON.back);
     setIcon(fwdBtn, ICON.forward);
     setIcon(newTabBtn, ICON.plus);
-    setIcon(menuBtn, ICON.gear);
+    setIcon(menuBtn, ICON.dots);
     setIcon(reloadBtn, loading ? ICON.stop : ICON.reload);
     reloadBtn.title = loading ? 'Остановить' : 'Обновить';
     reloadBtn.setAttribute('aria-label', reloadBtn.title);
@@ -147,7 +151,7 @@
     focusAddress() { input.focus(); input.select(); },
   };
 
-  menuBtn.addEventListener('click', () => send({ cmd: 'open_internal', page: 'settings' }));
+  menuBtn.addEventListener('click', () => send({ cmd: 'toggle_menu' }));
   starBtn.addEventListener('click', () => send({ cmd: 'toggle_bookmark' }));
 
   // ---------- Кнопки ----------

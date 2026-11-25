@@ -6,6 +6,8 @@ const PAGECSS_PLACEHOLDER: &str = "/*PAGECSS*/";
 const UI_HTML: &str = include_str!("../../assets/ui/index.html");
 const UI_CSS: &str = include_str!("../../assets/ui/ui.css");
 const UI_JS: &str = include_str!("../../assets/ui/ui.js");
+const MENU_HTML: &str = include_str!("../../assets/ui/menu.html");
+const MENU_JS: &str = include_str!("../../assets/ui/menu.js");
 
 const NEWTAB_HTML: &str = include_str!("../../assets/pages/newtab.html");
 const NEWTAB_JS: &str = include_str!("../../assets/pages/newtab.js");
@@ -21,6 +23,8 @@ const DOWNLOADS_HTML: &str = include_str!("../../assets/pages/downloads.html");
 const DOWNLOADS_JS: &str = include_str!("../../assets/pages/downloads.js");
 const SETTINGS_HTML: &str = include_str!("../../assets/pages/settings.html");
 const SETTINGS_JS: &str = include_str!("../../assets/pages/settings.js");
+const PASSWORDS_HTML: &str = include_str!("../../assets/pages/passwords.html");
+const PASSWORDS_JS: &str = include_str!("../../assets/pages/passwords.js");
 
 pub struct Asset {
     pub mime: &'static str,
@@ -50,6 +54,8 @@ pub fn chrome_asset(path: &str, theme_css: &str) -> Option<Asset> {
         "/" | "/index.html" => Some(html(UI_HTML, theme_css)),
         "/ui.css" => Some(text("text/css; charset=utf-8", UI_CSS)),
         "/ui.js" => Some(text("text/javascript; charset=utf-8", UI_JS)),
+        "/menu.html" => Some(html(MENU_HTML, theme_css)),
+        "/menu.js" => Some(text("text/javascript; charset=utf-8", MENU_JS)),
         _ => None,
     }
 }
@@ -70,6 +76,8 @@ pub fn page_asset(path: &str, theme_css: &str) -> Option<Asset> {
         "/downloads.js" => Some(text("text/javascript; charset=utf-8", DOWNLOADS_JS)),
         "/settings" => Some(html(SETTINGS_HTML, theme_css)),
         "/settings.js" => Some(text("text/javascript; charset=utf-8", SETTINGS_JS)),
+        "/passwords" => Some(html(PASSWORDS_HTML, theme_css)),
+        "/passwords.js" => Some(text("text/javascript; charset=utf-8", PASSWORDS_JS)),
         _ => None,
     }
 }
@@ -92,6 +100,8 @@ mod tests {
     fn chrome_assets_resolve_and_unknown_is_none() {
         assert!(chrome_asset("/ui.css", "").is_some());
         assert!(chrome_asset("/ui.js", "").is_some());
+        assert!(chrome_asset("/menu.html", "").is_some());
+        assert!(chrome_asset("/menu.js", "").is_some());
         assert!(chrome_asset("/secret.txt", "").is_none());
         assert!(chrome_asset("/../Cargo.toml", "").is_none());
     }

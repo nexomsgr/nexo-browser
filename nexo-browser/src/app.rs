@@ -26,7 +26,9 @@ use crate::storage::session::SessionTab;
 use crate::storage::settings::{Settings, ThemeChoice};
 use crate::storage::Db;
 use crate::ui::assets::{self, Asset};
-use crate::ui::ipc::{TabView, UiMessage, UiState};
+use crate::ui::ipc::{ImportKind, TabView, UiMessage, UiState};
+use crate::vault::{csv as vault_csv, NewCredential, Vault};
+use zeroize::Zeroize;
 use crate::ui::theme::{self, Theme};
 use crate::util::{now_ms, Throttle};
 use anyhow::{anyhow, Context, Result};
@@ -44,8 +46,11 @@ use wry::http::{Request, Response};
 use wry::{NewWindowResponse, PageLoadEvent, Rect, WebContext, WebView, WebViewBuilder};
 
 /// Высота панели интерфейса (вкладки 46 + инструменты 46) и отступ вокруг страницы, логические px.
-const CHROME_H: f64 = 92.0;
-const GUTTER: f64 = 8.0;
+const CHROME_H: f64 = 84.0;
+const GUTTER: f64 = 0.0;
+/// Ширина выпадающего меню ⋮ (логические пиксели) и отступ от правого края окна.
+const MENU_W: f64 = 300.0;
+const MENU_MARGIN: f64 = 6.0;
 /// Предохранитель от бесконечного открытия вкладок (всплывающие окна, ошибки сайтов).
 const MAX_TABS: usize = 100;
 
@@ -84,6 +89,8 @@ enum UserEvent {
     NewWindow(String),
     /// Интерфейс загрузился и готов принимать состояние.
     ChromeReady,
+    /// Страница меню ⋮ загрузилась.
+    MenuReady,
     /// Результат проверки «есть ли во вкладке несохранённый ввод» перед сном.
     InputProbe(TabId, bool, SleepKind),
     /// WebView2 ответил на `TrySuspend`.
@@ -151,6 +158,13 @@ struct App {
     history_query: String,
     /// Есть ли текущий адрес в закладках — чтобы не ходить в базу при каждом обновлении интерфейса.
     bookmark_cache: Option<(String, bool)>,
+    /// Выпадающее меню ⋮: отдельный WebView, который создаётся при открытии (так он всегда поверх страницы).
+    menu: Option<WebView>,
+    vault: Vault,
+    /// Файл импорта, собираемый из кусков, которые присылает страница. Может содержать пароли — стирается после разбора.
+    import_buf: Option<(ImportKind, String)>,
+    menu_height: f64,
+    menu_closed_at: Option<Instant>,
     // Должен быть последним: WebContext обязан пережить все WebView (поля освобождаются по порядку).
     ctx: WebContext,
 }
@@ -210,7 +224,17 @@ pub fn run() -> Result<()> {
 
     let launch_args = settings.performance_mode.browser_args();
     let mut ctx = WebContext::new(Some(data_dir.join("WebView2")));
-    let chrome = build_chrome(&mut ctx, &window, &proxy, &theme_css, th, &launch_args)?;
+    let chrome = build_ui_view(
+        &mut ctx,
+        &window,
+        &proxy,
+        &theme_css,
+        th,
+        &launch_args,
+        "index.html",
+        th.bg_start,
+        UserEvent::ChromeReady,
+    )?;
     let startup_url = startup_target(&settings, cli.urls.first()).load_url();
 
     let mut app = App {
@@ -241,6 +265,11 @@ pub fn run() -> Result<()> {
         html_fullscreen: false,
         history_query: String::new(),
         bookmark_cache: None,
+        menu: None,
+        vault: Vault::new(),
+        import_buf: None,
+        menu_height: 520.0,
+        menu_closed_at: None,
         ctx,
     };
     app.schedule_tick();
@@ -281,6 +310,7 @@ pub fn run() -> Result<()> {
                 event: WindowEvent::ScaleFactorChanged { .. },
                 ..
             } => {
+                app.menu_close();
                 app.layout();
             }
             Event::UserEvent(ev) => {
@@ -299,23 +329,30 @@ pub fn run() -> Result<()> {
 // Построение WebView
 // ---------------------------------------------------------------------------------------------
 
-fn build_chrome(
+/// WebView2 собственного интерфейса (`nexo-ui`): панель вкладок или выпадающее меню.
+/// Страница `page` лежит в ресурсах `assets/ui`; `ready` отправляется, когда она загрузилась.
+#[allow(clippy::too_many_arguments)]
+fn build_ui_view(
     ctx: &mut WebContext,
     window: &Window,
     proxy: &EventLoopProxy<UserEvent>,
     theme_css: &str,
     th: &Theme,
     browser_args: &str,
+    page: &str,
+    bg: theme::Rgb,
+    ready: UserEvent,
 ) -> Result<WebView> {
+    let _ = th;
     let css = theme_css.to_string();
     let (p_ipc, p_ready) = (proxy.clone(), proxy.clone());
 
     let builder = WebViewBuilder::new_with_web_context(ctx)
-        .with_background_color(rgba(th.bg_start))
+        .with_background_color(rgba(bg))
         .with_custom_protocol(UI_SCHEME.to_string(), move |_id, req| {
             respond(assets::chrome_asset(req.uri().path(), &css))
         })
-        .with_url(custom_protocol_url(UI_SCHEME, "index.html"))
+        .with_url(custom_protocol_url(UI_SCHEME, page))
         .with_ipc_handler(move |req: Request<String>| {
             if !is_protocol_origin(&req.uri().to_string(), UI_SCHEME) {
                 return;
@@ -329,7 +366,7 @@ fn build_chrome(
         .with_new_window_req_handler(|_, _| NewWindowResponse::Deny)
         .with_on_page_load_handler(move |ev, _| {
             if matches!(ev, PageLoadEvent::Finished) {
-                let _ = p_ready.send_event(UserEvent::ChromeReady);
+                let _ = p_ready.send_event(ready.clone());
             }
         })
         .with_hotkeys_zoom(false)
@@ -607,8 +644,11 @@ impl App {
     }
 
     fn activate_tab(&mut self, id: TabId) {
+        self.menu_close();
+        let t0 = Instant::now();
         let prev = self.tabs.get(id).map(|t| t.state);
-        if self.tabs.active_id() == Some(id) || !self.tabs.activate(id, now_ms()) {
+        let prev_active = self.tabs.active_id();
+        if prev_active == Some(id) || !self.tabs.activate(id, now_ms()) {
             return;
         }
         match prev {
@@ -622,10 +662,28 @@ impl App {
             }
             _ => {}
         }
-        self.show_only_active();
+        // Переключение вкладки трогает только две вкладки: прежнюю (скрыть) и новую (показать).
+        // Каждый вызов WebView2 — синхронный COM-вызов, поэтому по всем вкладкам их не гоняем.
+        self.switch_visibility(prev_active, id);
         self.sync_window_title();
         self.push_state();
         self.save_session();
+        if std::env::var_os("NEXO_TRACE").is_some() {
+            eprintln!("[nexo] activate_tab: {} мс", t0.elapsed().as_millis());
+        }
+    }
+
+    fn switch_visibility(&self, from: Option<TabId>, to: TabId) {
+        let trim = self.settings.performance_mode.trim_hidden_immediately();
+        if let Some(v) = from.and_then(|id| self.views.get(&id)) {
+            let _ = v.set_visible(false);
+            webview_ops::set_low_memory(v, trim);
+        }
+        if let Some(v) = self.views.get(&to) {
+            let _ = v.set_visible(true);
+            webview_ops::set_low_memory(v, false);
+            let _ = v.focus();
+        }
     }
 
     /// Закрывает вкладку и уничтожает её WebView2 (освобождает процесс рендеринга и память).
@@ -711,6 +769,7 @@ impl App {
                 }
             }
             UserEvent::ChromeReady => self.push_state(),
+            UserEvent::MenuReady => self.on_menu_ready(),
             UserEvent::InputProbe(id, dirty, kind) => self.on_probe(id, dirty, kind),
             UserEvent::SuspendDone(id, ok) => self.on_suspend_done(id, ok),
             UserEvent::Cmd(cmd) => return self.run_command(cmd),
@@ -790,6 +849,16 @@ impl App {
                 }
             }
             UiMessage::ToggleBookmark => self.toggle_bookmark(),
+            UiMessage::ToggleMenu => {
+                if self.menu.is_some() {
+                    self.menu_close();
+                } else {
+                    self.menu_open();
+                }
+            }
+            UiMessage::MenuClose => self.menu_close(),
+            UiMessage::MenuSize { height } => self.menu_resize(f64::from(height.clamp(120, 900))),
+            UiMessage::MenuAction { id } => return self.menu_action(&id),
             // Остальные сообщения (закладки, история, загрузки, настройки) приходят только от внутренних страниц.
             _ => {}
         }
@@ -860,8 +929,133 @@ impl App {
             Command::FreeMemory => {
                 let _ = self.free_memory();
             }
+            Command::Print => {
+                if let Some(v) = self.active_view() {
+                    let _ = v.print();
+                }
+            }
         }
         false
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Выпадающее меню ⋮
+    // -----------------------------------------------------------------------------------------
+
+    fn menu_rect(&self, height: f64) -> Rect {
+        let sf = self.window.scale_factor();
+        let size: LogicalSize<f64> = self.window.inner_size().to_logical(sf);
+        let w = MENU_W.min((size.width - 2.0 * MENU_MARGIN).max(120.0));
+        let h = height.min((size.height - CHROME_H).max(120.0));
+        Rect {
+            position: LogicalPosition::new((size.width - w - MENU_MARGIN).max(0.0), CHROME_H - 4.0).into(),
+            size: LogicalSize::new(w, h).into(),
+        }
+    }
+
+    /// Открывает меню. WebView меню создаётся заново при каждом открытии: самое новое дочернее окно
+    /// всегда лежит поверх WebView страниц, а закрытое меню не занимает память.
+    fn menu_open(&mut self) {
+        if self.menu.is_some() || self.is_fullscreen() {
+            return;
+        }
+        // Клик по ⋮ при открытом меню сначала закрывает его потерей фокуса — не открываем заново.
+        if self.menu_closed_at.is_some_and(|t| t.elapsed() < Duration::from_millis(300)) {
+            return;
+        }
+        let view = build_ui_view(
+            &mut self.ctx,
+            &self.window,
+            &self.proxy,
+            &self.theme_css,
+            &self.theme,
+            &self.launch_args,
+            "menu.html",
+            self.theme.panel_hover,
+            UserEvent::MenuReady,
+        );
+        if let Ok(view) = view {
+            let _ = view.set_bounds(self.menu_rect(self.menu_height));
+            self.menu = Some(view);
+        }
+    }
+
+    fn menu_close(&mut self) {
+        if self.menu.take().is_some() {
+            self.menu_closed_at = Some(Instant::now());
+            if let Some(v) = self.active_view() {
+                let _ = v.focus();
+            }
+        }
+    }
+
+    fn menu_resize(&mut self, height: f64) {
+        self.menu_height = height;
+        if let Some(m) = &self.menu {
+            let _ = m.set_bounds(self.menu_rect(height));
+        }
+    }
+
+    fn on_menu_ready(&mut self) {
+        if let Some(m) = &self.menu {
+            let _ = m.focus(); // без фокуса не сработает закрытие по клику вне меню
+        }
+        self.menu_push_state();
+    }
+
+    fn menu_push_state(&self) {
+        let zoom = self.tabs.active().map(|t| t.zoom).unwrap_or(1.0);
+        let state = serde_json::json!({ "zoom": (zoom * 100.0).round() as u32, "private": self.private });
+        if let Some(m) = &self.menu {
+            let _ = m.evaluate_script(&format!("window.menu&&window.menu.setState({state});"));
+        }
+    }
+
+    /// Пункт меню. Масштаб меняется без закрытия меню; остальное закрывает его.
+    /// Возвращает `true` для «Выход».
+    fn menu_action(&mut self, id: &str) -> bool {
+        if self.menu.is_none() {
+            return false;
+        }
+        let zoom_cmd = match id {
+            "zoom_in" => Some(Command::ZoomIn),
+            "zoom_out" => Some(Command::ZoomOut),
+            "zoom_reset" => Some(Command::ZoomReset),
+            _ => None,
+        };
+        if let Some(cmd) = zoom_cmd {
+            self.run_command(cmd);
+            self.menu_push_state();
+            return false;
+        }
+        self.menu_close();
+        match id {
+            "new_tab" => self.run_command(Command::NewTab),
+            "private" => self.run_command(Command::NewPrivateTab),
+            "history" => self.run_command(Command::ShowHistory),
+            "downloads" => self.run_command(Command::ShowDownloads),
+            "bookmarks" => self.run_command(Command::ShowBookmarks),
+            "fullscreen" => self.run_command(Command::ToggleFullscreen),
+            "print" => self.run_command(Command::Print),
+            "free_memory" => self.run_command(Command::FreeMemory),
+            "settings" => {
+                self.open_internal(InternalPage::Settings);
+                false
+            }
+            "passwords" => {
+                self.open_internal(InternalPage::Passwords);
+                false
+            }
+            "performance" => {
+                self.open_internal(InternalPage::Performance);
+                false
+            }
+            "exit" => {
+                self.shutdown();
+                true
+            }
+            _ => false,
+        }
     }
 
     fn focus_address(&self) {
@@ -1117,8 +1311,250 @@ impl App {
                 }
                 self.refresh_page(InternalPage::Settings);
             }
+            UiMessage::BackupExport => self.backup_export(id),
+            UiMessage::ImportBegin { kind } => {
+                if let Some((_, mut b)) = self.import_buf.take() {
+                    b.zeroize();
+                }
+                self.import_buf = Some((kind, String::new()));
+            }
+            UiMessage::ImportChunk { data } => self.import_chunk(&data),
+            UiMessage::ImportCommit {
+                kind,
+                apply_settings,
+            } => self.import_commit(id, kind, apply_settings),
+            msg @ (UiMessage::VaultStatus
+            | UiMessage::VaultCreate { .. }
+            | UiMessage::VaultUnlock { .. }
+            | UiMessage::VaultLock
+            | UiMessage::VaultSave { .. }
+            | UiMessage::VaultDelete { .. }
+            | UiMessage::VaultReveal { .. }
+            | UiMessage::VaultExport { .. }
+            | UiMessage::VaultChangeMaster { .. }
+            | UiMessage::VaultReset) => self.vault_message(id, msg),
             other => self.memory_message(Some(id), other),
         }
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Перенос данных (JSON) и менеджер паролей
+    // -----------------------------------------------------------------------------------------
+
+    fn page_notice(&self, id: TabId, ok: bool, text: &str) {
+        if let Some(view) = self.views.get(&id) {
+            let _ = view.evaluate_script(&data::to_script(
+                "notice",
+                &serde_json::json!({"ok": ok, "text": text}),
+            ));
+        }
+    }
+
+    /// Папка для экспортируемых файлов: «Загрузки» пользователя.
+    fn export_dir() -> PathBuf {
+        dirs::download_dir().unwrap_or_else(data_dir)
+    }
+
+    /// Записывает файл экспорта, не перезаписывая существующие (`create_new`).
+    fn write_export(prefix: &str, ext: &str, content: &str) -> Result<PathBuf> {
+        use std::io::Write;
+        let dir = Self::export_dir();
+        std::fs::create_dir_all(&dir).with_context(|| format!("создание {}", dir.display()))?;
+        let stamp = crate::util::timestamp_label(now_ms());
+        for n in 0..100 {
+            let suffix = if n == 0 { String::new() } else { format!("-{n}") };
+            let path = dir.join(format!("{prefix}-{stamp}{suffix}.{ext}"));
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(mut f) => {
+                    f.write_all(content.as_bytes())?;
+                    f.flush()?;
+                    return Ok(path);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(anyhow!("не удалось записать файл: {e}")),
+            }
+        }
+        Err(anyhow!("не удалось подобрать имя файла"))
+    }
+
+    fn backup_export(&mut self, id: TabId) {
+        let Some(db) = &self.db else {
+            self.page_notice(id, false, "В приватном окне данные не сохраняются — экспортировать нечего.");
+            return;
+        };
+        let result = crate::backup::export(db, &self.settings, now_ms())
+            .and_then(|json| Self::write_export("nexo-backup", "json", &json));
+        match result {
+            Ok(path) => {
+                let p = path.display().to_string();
+                show_in_folder(&p);
+                self.page_notice(id, true, &format!("Сохранено: {p}"));
+            }
+            Err(e) => self.page_notice(id, false, &format!("Не удалось экспортировать: {e}")),
+        }
+    }
+
+    fn import_chunk(&mut self, data: &str) {
+        const MAX: usize = crate::backup::MAX_FILE_BYTES;
+        if let Some((_, buf)) = &mut self.import_buf {
+            if buf.len() + data.len() > MAX {
+                buf.zeroize();
+                self.import_buf = None; // слишком большой файл: commit сообщит об ошибке
+            } else {
+                buf.push_str(data);
+            }
+        }
+    }
+
+    fn import_commit(&mut self, id: TabId, kind: ImportKind, apply_settings: bool) {
+        let Some((k, mut text)) = self.import_buf.take() else {
+            self.page_notice(id, false, "Файл не получен или слишком большой (максимум 32 МБ).");
+            return;
+        };
+        if k != kind {
+            text.zeroize();
+            self.page_notice(id, false, "Внутренняя ошибка импорта.");
+            return;
+        }
+        let result = match kind {
+            ImportKind::Backup => self.import_backup(&text, apply_settings),
+            ImportKind::Passwords => self.import_passwords(&text),
+        };
+        text.zeroize();
+        match result {
+            Ok(msg) => self.page_notice(id, true, &msg),
+            Err(e) => self.page_notice(id, false, &e),
+        }
+        self.refresh_page(InternalPage::Bookmarks);
+        self.refresh_page(InternalPage::History);
+        self.refresh_page(InternalPage::Passwords);
+    }
+
+    fn import_backup(&mut self, text: &str, apply_settings: bool) -> std::result::Result<String, String> {
+        let Some(db) = &self.db else {
+            return Err("В приватном окне импорт недоступен.".into());
+        };
+        let backup = crate::backup::parse(text).map_err(|e| e.to_string())?;
+        let (rep, settings) =
+            crate::backup::import(db, &backup, apply_settings).map_err(|e| format!("Не удалось импортировать: {e}"))?;
+        if let Some(s) = settings {
+            self.settings = s;
+            self.save_settings();
+            self.schedule_tick();
+            self.apply_memory_levels();
+            self.refresh_page(InternalPage::Settings);
+        }
+        self.bookmark_cache = None;
+        self.push_state();
+        Ok(format!(
+            "Импортировано: закладок — {}, папок — {}, записей истории — {}{}{}.",
+            rep.bookmarks,
+            rep.folders,
+            rep.history,
+            if rep.settings { ", настройки применены (тема — после перезапуска)" } else { "" },
+            if rep.skipped > 0 { format!(", пропущено некорректных — {}", rep.skipped) } else { String::new() },
+        ))
+    }
+
+    fn import_passwords(&mut self, text: &str) -> std::result::Result<String, String> {
+        let Some(db) = &self.db else {
+            return Err("В приватном окне менеджер паролей недоступен.".into());
+        };
+        self.vault.refresh(now_ms());
+        if !self.vault.is_unlocked() {
+            return Err("Сначала разблокируйте хранилище.".into());
+        }
+        let mut parsed = vault_csv::credentials_from_csv(text).map_err(|e| e.to_string())?;
+        let list: Vec<NewCredential> = std::mem::take(&mut parsed.items);
+        let stats = self.vault.import(db, list, now_ms()).map_err(|e| e.to_string())?;
+        Ok(format!(
+            "Импортировано паролей: {}, уже были в хранилище: {}, пропущено строк без пароля или адреса: {}. \
+             Удалите CSV-файл: в нём пароли в открытом виде.",
+            stats.added, stats.duplicates, parsed.skipped
+        ))
+    }
+
+    fn vault_message(&mut self, id: TabId, msg: UiMessage) {
+        let now = now_ms();
+        self.vault.refresh(now);
+        let Some(db) = &self.db else {
+            self.page_notice(id, false, "В приватном окне менеджер паролей недоступен.");
+            return;
+        };
+        // Каждая ветка возвращает текст успеха (None — ничего показывать не надо) или ошибку.
+        let result: std::result::Result<Option<String>, crate::vault::VaultError> = match msg {
+            UiMessage::VaultStatus => Ok(None),
+            UiMessage::VaultCreate { mut master } => {
+                let r = self.vault.create(db, &master, now);
+                master.zeroize();
+                r.map(|_| Some("Хранилище создано. Запомните мастер-пароль: восстановить его нельзя.".into()))
+            }
+            UiMessage::VaultUnlock { mut master } => {
+                let r = self.vault.unlock(db, &master, now);
+                master.zeroize();
+                r.map(|_| None)
+            }
+            UiMessage::VaultLock => {
+                self.vault.lock();
+                Ok(None)
+            }
+            UiMessage::VaultSave {
+                id: item,
+                name,
+                url,
+                username,
+                password,
+                note,
+            } => self
+                .vault
+                .save(db, item, NewCredential { name, url, username, password, note }, now)
+                .map(|_| Some("Сохранено.".into())),
+            UiMessage::VaultDelete { id: item } => self.vault.delete(db, item).map(|_| Some("Удалено.".into())),
+            UiMessage::VaultReveal { id: item } => {
+                match self.vault.password_of(item) {
+                    Ok(p) => {
+                        if let Some(view) = self.views.get(&id) {
+                            let _ = view.evaluate_script(&data::to_script(
+                                "reveal",
+                                &serde_json::json!({"id": item, "password": p}),
+                            ));
+                        }
+                        return;
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            UiMessage::VaultExport { mut master } => {
+                let r = self.vault.verify(db, &master);
+                master.zeroize();
+                r.and_then(|_| self.vault.export_csv()).and_then(|mut csv| {
+                    let w = Self::write_export("nexo-passwords", "csv", &csv).map_err(|e| crate::vault::VaultError::Storage(e.to_string()));
+                    csv.zeroize();
+                    w
+                })
+                .map(|path| {
+                    let p = path.display().to_string();
+                    show_in_folder(&p);
+                    Some(format!(
+                        "Пароли сохранены в открытом виде: {p}. Не храните и не пересылайте этот файл — удалите его после переноса."
+                    ))
+                })
+            }
+            UiMessage::VaultChangeMaster { mut old, mut new } => {
+                let r = self.vault.change_master(db, &old, &new, now);
+                old.zeroize();
+                new.zeroize();
+                r.map(|_| Some("Мастер-пароль изменён.".into()))
+            }
+            UiMessage::VaultReset => self.vault.reset(db).map(|_| Some("Хранилище удалено.".into())),
+            _ => return,
+        };
+        match result {
+            Ok(Some(text)) => self.page_notice(id, true, &text),
+            Ok(None) => {}
+            Err(e) => self.page_notice(id, false, &e.to_string()),
+        }
+        self.refresh_page(InternalPage::Passwords);
     }
 
     /// Отправляет данные странице вкладки `id` — по адресу вкладки видно, какая это страница.
@@ -1134,6 +1570,16 @@ impl App {
                 .map(|d| data::history_json(d, &self.history_query)),
             InternalPage::Downloads => Some(data::downloads_json(&self.downloads)),
             InternalPage::Settings => Some(data::settings_json(&self.settings)),
+            InternalPage::NewTab => self.db.as_ref().map(data::topsites_json),
+            InternalPage::Passwords => {
+                self.vault.refresh(now_ms());
+                let init = self
+                    .db
+                    .as_ref()
+                    .and_then(|d| Vault::is_initialized(d).ok())
+                    .unwrap_or(false);
+                Some(data::vault_json(self.db.is_some(), init, &self.vault))
+            }
             _ => None,
         };
         let json = json.unwrap_or_else(|| serde_json::json!({}));
@@ -1225,7 +1671,7 @@ impl App {
     // -----------------------------------------------------------------------------------------
 
     fn wait_mode(&self) -> ControlFlow {
-        if self.settings.sleeping_enabled {
+        if self.settings.sleeping_enabled || self.vault.is_unlocked() {
             ControlFlow::WaitUntil(self.next_tick)
         } else {
             ControlFlow::Wait
@@ -1260,6 +1706,9 @@ impl App {
     }
 
     fn tick(&mut self) {
+        if self.vault.expire(now_ms()) {
+            self.refresh_page(InternalPage::Passwords);
+        }
         if !self.settings.sleeping_enabled {
             return;
         }

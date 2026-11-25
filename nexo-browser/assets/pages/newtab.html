@@ -8,7 +8,7 @@
 /*THEME*/
 html, body { height: 100%; margin: 0; }
 body {
-  display: flex; align-items: center; justify-content: center;
+  display: flex; align-items: center; justify-content: center; padding-bottom: 6vh;
   font: 15px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 }
 .wrap { width: min(640px, 86vw); text-align: center; }
@@ -28,6 +28,11 @@ input {
   color: var(--text); font: inherit; font-size: 16px;
 }
 input::placeholder { color: var(--text-dim); }
+.sites { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 12px; margin: 30px auto 0; width: min(520px, 86vw); }
+.site { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 4px 10px; border: 0; border-radius: 12px; background: transparent; color: var(--text); font: inherit; font-size: 12.5px; cursor: default; min-width: 0; }
+.site:hover { background: var(--panel-hover); }
+.site .tile { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; background: var(--panel); border: 1px solid var(--panel-border); color: var(--accent-cyan); font-size: 20px; font-weight: 700; }
+.site .name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hint { margin: 18px 0 0; color: var(--text-dim); font-size: 13px; }
 </style>
 </head>
@@ -37,6 +42,7 @@ input::placeholder { color: var(--text-dim); }
   <form id="f" autocomplete="off">
     <input id="q" type="text" autofocus spellcheck="false" placeholder="Поиск или адрес сайта" aria-label="Поиск или адрес сайта">
   </form>
+  <div class="sites" id="sites"></div>
   <p class="hint">Nexo Browser — быстро и бережно к оперативной памяти</p>
 </div>
 <script src="newtab.js"></script>

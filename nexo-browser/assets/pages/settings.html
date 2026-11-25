@@ -19,6 +19,15 @@
   <div class="setting"><div><div>Домашняя страница</div><div class="hint">Пусто — «Новая вкладка».</div></div>
     <input type="text" id="home" maxlength="2048" placeholder="https://…"></div>
 </div>
+<h2>Перенос данных</h2>
+<div class="card">
+  <div class="setting"><div><div>Экспорт закладок, истории и настроек</div><div class="hint">Файл JSON сохраняется в папку «Загрузки». Пароли в него не входят.</div></div>
+    <button class="btn" id="bk-export">Экспорт</button></div>
+  <div class="setting"><div><div>Импорт из файла JSON</div><div class="hint">Данные добавляются к текущим, ничего не удаляется, повторы пропускаются.</div>
+    <label class="hint"><input type="checkbox" id="bk-settings"> применить также настройки из файла</label></div>
+    <button class="btn ghost" id="bk-import">Выбрать файл…</button><input type="file" id="bk-file" accept=".json,application/json" hidden></div>
+  <div class="setting"><div id="bk-notice" class="hint" role="status"></div><button class="btn ghost" id="to-pass">Менеджер паролей</button></div>
+</div>
 <h2>Память</h2>
 <div class="card"><div class="setting"><div><div>Режим производительности и сон вкладок</div><div class="hint">Настройки и измерения памяти — на странице производительности.</div></div>
   <button class="btn" id="perf">Открыть</button></div></div>

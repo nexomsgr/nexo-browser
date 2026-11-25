@@ -76,6 +76,18 @@ pub enum UiMessage {
         id: i64,
     },
     HistoryClear,
+    /// Кнопка ⋮ в панели: открыть или закрыть меню.
+    ToggleMenu,
+    /// Меню потеряло фокус или закрыто клавишей Esc.
+    MenuClose,
+    /// Меню сообщает свою высоту (в логических пикселях), чтобы окно меню совпало с содержимым.
+    MenuSize {
+        height: u32,
+    },
+    /// Выбранный пункт меню (идентификатор из фиксированного списка).
+    MenuAction {
+        id: String,
+    },
     DownloadCancel {
         id: u64,
     },
@@ -91,15 +103,74 @@ pub enum UiMessage {
         homepage: Option<String>,
         default_zoom_pct: Option<u32>,
     },
+    /// Экспорт закладок, истории и настроек в JSON-файл (в папку «Загрузки»).
+    BackupExport,
+    /// Начало передачи файла для импорта: страница читает файл сама и присылает его кусками.
+    ImportBegin {
+        kind: ImportKind,
+    },
+    ImportChunk {
+        data: String,
+    },
+    ImportCommit {
+        kind: ImportKind,
+        #[serde(default)]
+        apply_settings: bool,
+    },
+    VaultStatus,
+    VaultCreate {
+        master: String,
+    },
+    VaultUnlock {
+        master: String,
+    },
+    VaultLock,
+    VaultSave {
+        id: Option<i64>,
+        name: String,
+        url: String,
+        username: String,
+        password: String,
+        note: String,
+    },
+    VaultDelete {
+        id: i64,
+    },
+    VaultReveal {
+        id: i64,
+    },
+    VaultExport {
+        master: String,
+    },
+    VaultChangeMaster {
+        old: String,
+        new: String,
+    },
+    VaultReset,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportKind {
+    Backup,
+    Passwords,
+}
+
+/// Лимит размера одного сообщения. Файлы для импорта приходят кусками, поэтому он выше, чем у команд интерфейса.
+pub const MAX_MESSAGE_BYTES: usize = 128 * 1024;
 
 impl UiMessage {
     pub fn parse(json: &str) -> Option<Self> {
         // Защита от чрезмерно больших сообщений.
-        if json.len() > 8 * 1024 {
+        if json.len() > MAX_MESSAGE_BYTES {
             return None;
         }
-        serde_json::from_str(json).ok()
+        let msg: Self = serde_json::from_str(json).ok()?;
+        // Крупными бывают только куски файла импорта; у всех остальных команд прежний лимит 8 КБ.
+        if json.len() > 8 * 1024 && !matches!(msg, UiMessage::ImportChunk { .. }) {
+            return None;
+        }
+        Some(msg)
     }
 
     /// Команды, которые вправе отправлять внутренние страницы nexo://: навигация (строка поиска
@@ -125,6 +196,20 @@ impl UiMessage {
                 | UiMessage::DownloadShow { .. }
                 | UiMessage::DownloadsClearFinished
                 | UiMessage::UpdateSettings { .. }
+                | UiMessage::BackupExport
+                | UiMessage::ImportBegin { .. }
+                | UiMessage::ImportChunk { .. }
+                | UiMessage::ImportCommit { .. }
+                | UiMessage::VaultStatus
+                | UiMessage::VaultCreate { .. }
+                | UiMessage::VaultUnlock { .. }
+                | UiMessage::VaultLock
+                | UiMessage::VaultSave { .. }
+                | UiMessage::VaultDelete { .. }
+                | UiMessage::VaultReveal { .. }
+                | UiMessage::VaultExport { .. }
+                | UiMessage::VaultChangeMaster { .. }
+                | UiMessage::VaultReset
         )
     }
 }
@@ -382,5 +467,45 @@ mod tests {
         assert_eq!(v["tabs"][0]["title"], "a\"b</script>"); // кавычки экранированы JSON-ом
         assert_eq!(v["can_back"], true);
         assert_eq!(v["bookmarked"], true);
+    }
+}
+
+#[cfg(test)]
+mod vault_ipc_tests {
+    use super::*;
+
+    #[test]
+    fn vault_and_import_messages_parse_and_are_page_only_safe() {
+        let m = UiMessage::parse(r#"{"cmd":"vault_unlock","master":"x"}"#).unwrap();
+        assert!(m.allowed_from_page());
+        let m = UiMessage::parse(r#"{"cmd":"import_commit","kind":"passwords"}"#).unwrap();
+        assert!(matches!(m, UiMessage::ImportCommit { kind: ImportKind::Passwords, apply_settings: false }));
+        assert!(UiMessage::parse(r#"{"cmd":"import_commit","kind":"evil"}"#).is_none());
+    }
+
+    #[test]
+    fn chunk_limit_allows_big_chunks_but_not_huge_messages() {
+        let chunk = "a".repeat(100_000);
+        assert!(UiMessage::parse(&format!(r#"{{"cmd":"import_chunk","data":"{chunk}"}}"#)).is_some());
+        let huge = "a".repeat(MAX_MESSAGE_BYTES);
+        assert!(UiMessage::parse(&format!(r#"{{"cmd":"import_chunk","data":"{huge}"}}"#)).is_none());
+    }
+
+    #[test]
+    fn vault_commands_are_available_to_internal_pages_but_page_cannot_open_menu() {
+        assert!(!UiMessage::ToggleMenu.allowed_from_page());
+        assert!(!UiMessage::MenuAction { id: "exit".into() }.allowed_from_page());
+    }
+}
+
+#[cfg(test)]
+mod big_message_tests {
+    use super::*;
+
+    #[test]
+    fn only_import_chunks_may_exceed_8kb() {
+        let big = "a".repeat(20_000);
+        assert!(UiMessage::parse(&format!(r#"{{"cmd":"navigate","input":"{big}"}}"#)).is_none());
+        assert!(UiMessage::parse(&format!(r#"{{"cmd":"import_chunk","data":"{big}"}}"#)).is_some());
     }
 }

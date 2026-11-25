@@ -12,3 +12,5 @@ pub mod shortcuts;
 pub mod storage;
 pub mod ui;
 pub mod util;
+pub mod vault;
+pub mod backup;

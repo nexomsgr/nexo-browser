@@ -25,5 +25,17 @@
   $('restore').addEventListener('change', (e) => update({ restore_session: e.target.checked }));
   $('home').addEventListener('change', (e) => update({ homepage: e.target.value }));
   $('perf').addEventListener('click', () => open('nexo://performance'));
+  $('to-pass').addEventListener('click', () => open('nexo://passwords'));
+  $('bk-export').addEventListener('click', () => { $('bk-notice').textContent = 'Экспортирую…'; send({ cmd: 'backup_export' }); });
+  $('bk-import').addEventListener('click', () => $('bk-file').click());
+  $('bk-file').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    $('bk-notice').textContent = 'Импортирую…';
+    try { await window.nexoLib.sendFile('backup', f, { apply_settings: $('bk-settings').checked }); }
+    catch (err) { $('bk-notice').textContent = err.message; }
+  });
+  on('notice', (n) => { $('bk-notice').textContent = n.text; });
   ready();
 })();

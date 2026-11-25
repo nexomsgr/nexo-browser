@@ -25,4 +25,5 @@ pub enum Command {
     ShowBookmarks,
     ShowDownloads,
     FreeMemory,
+    Print,
 }

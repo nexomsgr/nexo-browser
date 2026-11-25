@@ -49,6 +49,18 @@ CREATE TABLE site_permissions (
 );
 ";
 
+const SCHEMA_V2: &str = "
+CREATE TABLE vault_meta (
+    key   TEXT PRIMARY KEY,
+    value BLOB NOT NULL
+);
+CREATE TABLE vault_items (
+    id         INTEGER PRIMARY KEY,
+    data       BLOB NOT NULL,
+    updated_ms INTEGER NOT NULL
+);
+";
+
 pub struct Db {
     conn: Connection,
 }
@@ -73,6 +85,7 @@ impl Db {
             "PRAGMA foreign_keys = ON;
              PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
+             PRAGMA secure_delete = ON;
              PRAGMA cache_size = -1024;",
         )?;
         let db = Self { conn };
@@ -88,6 +101,12 @@ impl Db {
             let tx = self.conn.unchecked_transaction()?;
             tx.execute_batch(SCHEMA_V1)?;
             tx.execute_batch("PRAGMA user_version = 1;")?;
+            tx.commit()?;
+        }
+        if version < 2 {
+            let tx = self.conn.unchecked_transaction()?;
+            tx.execute_batch(SCHEMA_V2)?;
+            tx.execute_batch("PRAGMA user_version = 2;")?;
             tx.commit()?;
         }
         Ok(())
@@ -111,7 +130,7 @@ mod tests {
     #[test]
     fn creates_schema() {
         let db = Db::open_in_memory().unwrap();
-        assert_eq!(db.schema_version().unwrap(), 1);
+        assert_eq!(db.schema_version().unwrap(), 2);
         let n: i64 = db
             .conn()
             .query_row(
@@ -120,7 +139,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert!(n >= 6);
+        assert!(n >= 8);
     }
 
     #[test]
